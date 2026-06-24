@@ -1,0 +1,604 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MoskvichAlarm — 3D-стенд</title>
+<style>
+  :root{
+    --ink:#1d2733; --muted:#5b6b7c; --line:#d2dae2; --panel:#ffffffee;
+    --red:#e23b3b; --black:#2a2f36; --blue:#2563eb; --green:#159c4b; --accent:#0f6fc4;
+    --mono:"SFMono-Regular",ui-monospace,"Cascadia Mono","Roboto Mono",Consolas,monospace;
+    --sans:system-ui,"Segoe UI",Roboto,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden;background:#e9edf2;font-family:var(--sans);color:var(--ink)}
+  #app{position:fixed;inset:0}
+  canvas{display:block}
+
+  .panel{position:absolute;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;backdrop-filter:blur(6px);box-shadow:0 6px 22px rgba(20,40,70,.10)}
+
+  #title{top:16px;left:50%;transform:translateX(-50%);padding:10px 20px;text-align:center;
+    border-radius:14px;max-width:92vw}
+  #title h1{margin:0;font-size:17px;letter-spacing:.2px;font-weight:800}
+  #title .sub{margin-top:2px;font-size:11px;color:var(--muted);font-family:var(--mono);letter-spacing:.4px}
+
+  #legend{left:16px;bottom:16px;padding:12px 14px;min-width:194px}
+  #legend h2{margin:0 0 8px;font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--muted)}
+  .row{display:flex;align-items:center;gap:9px;font-size:12.5px;margin:5px 0}
+  .sw{width:26px;height:6px;border-radius:3px;flex:0 0 auto}
+  .sw.red{background:var(--red)} .sw.black{background:var(--black)}
+  .sw.blue{background:var(--blue)} .sw.green{background:var(--green)}
+  .sw.thick{height:9px}
+  .legend-note{margin-top:9px;font-size:11px;color:var(--muted);line-height:1.4}
+
+  #notes{right:16px;bottom:16px;max-width:330px;padding:12px 14px;font-size:12px;line-height:1.5}
+  #notes b{color:var(--accent)}
+  #notes .blk{padding-left:10px;border-left:3px solid var(--line);margin:8px 0}
+  #notes .blk.usb{border-color:#3b9ae2}
+  #notes .blk.g33{border-color:#9aa6b2}
+
+  #flowbar{right:16px;top:16px;padding:10px 12px;font-size:12px}
+  #flowbar h2{margin:0 0 6px;font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted)}
+  #flowbar .chain{font-family:var(--mono);font-size:11px;color:var(--muted);max-width:230px;line-height:1.7}
+  #flowbar .chain b{color:var(--red)}
+
+  #toolbar{left:16px;top:16px;display:flex;flex-direction:column;gap:7px}
+  .btn{font:600 12px var(--sans);color:var(--ink);background:#fff;border:1px solid var(--line);
+    border-radius:9px;padding:8px 11px;cursor:pointer;display:flex;align-items:center;gap:8px;
+    box-shadow:0 2px 8px rgba(20,40,70,.06);transition:.15s;min-width:172px}
+  .btn:hover{border-color:#b9c6d4;transform:translateY(-1px)}
+  .btn .dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:0 0 auto}
+  .btn.off .dot{background:#c4ccd5}
+  .btn .lbl{flex:1;text-align:left}
+  .hint{font-family:var(--mono);font-size:10.5px;color:var(--muted);padding:2px 4px}
+
+  #loader{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:#e9edf2;font-family:var(--mono);color:var(--muted);font-size:13px;z-index:20}
+  @media (max-width:760px){
+    #notes,#flowbar{display:none}
+    #title h1{font-size:14px}
+    .btn{min-width:140px}
+  }
+</style>
+
+<div id="app"></div>
+<div id="loader">сборка 3D-стенда…</div>
+
+<div id="title" class="panel">
+  <h1>MoskvichAlarm — 3D-стенд текущей сборки</h1>
+  <div class="sub">CAD / inženernyj maket · все соединения по исходной схеме</div>
+</div>
+
+<div id="toolbar">
+  <button class="btn" id="btnPins"><span class="dot"></span><span class="lbl">Подписи пинов</span></button>
+  <button class="btn" id="btnFlow"><span class="dot"></span><span class="lbl">Поток питания</span></button>
+  <button class="btn" id="btnReset"><span class="dot" style="background:var(--accent)"></span><span class="lbl">Сбросить вид</span></button>
+  <div class="hint">ЛКМ — поворот · колесо — зум · ПКМ — сдвиг</div>
+</div>
+
+<div id="flowbar" class="panel">
+  <h2>Направление питания</h2>
+  <div class="chain"><b>АКБ</b> → предохр. → выключатель →<br>INA226 <b>VIN+</b> → <b>VIN−</b> →<br>системная + шина →<br>DC-DC&nbsp;5V&nbsp;/&nbsp;сирена</div>
+</div>
+
+<div id="legend" class="panel">
+  <h2>Условные обозначения</h2>
+  <div class="row"><span class="sw red thick"></span> + питание (силовое)</div>
+  <div class="row"><span class="sw red"></span> + питание (логика)</div>
+  <div class="row"><span class="sw black thick"></span> GND / земля</div>
+  <div class="row"><span class="sw blue"></span> I²C (SDA / SCL)</div>
+  <div class="row"><span class="sw green"></span> цифровой сигнал / управление</div>
+  <div class="legend-note">Толстые линии — силовые трассы.<br>Тонкие синие/зелёные — сигнальные.</div>
+</div>
+
+<div id="notes" class="panel">
+  <div class="blk usb"><b>USB:</b> при подключённом USB плата может питаться от USB, поэтому ток INA226 может быть близок к 0&nbsp;А.</div>
+  <div class="blk g33"><b>GPIO33</b> не используется. Физическое выключение системы — главным выключателем питания перед DC-DC.</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const T = THREE;
+
+/* ---------- scene ---------- */
+const app = document.getElementById('app');
+const scene = new T.Scene();
+scene.background = new T.Color(0xe9edf2);
+
+const renderer = new T.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = T.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+const camera = new T.PerspectiveCamera(42, 1, 0.1, 2000);
+
+/* lights */
+scene.add(new T.HemisphereLight(0xffffff, 0xb8c2cc, 0.85));
+const key = new T.DirectionalLight(0xffffff, 0.95);
+key.position.set(40, 70, 38);
+key.castShadow = true;
+key.shadow.mapSize.set(2048,2048);
+const S=70; const cam=key.shadow.camera;
+cam.left=-S;cam.right=S;cam.top=S;cam.bottom=-S;cam.near=1;cam.far=260;
+key.shadow.bias=-0.0004;
+scene.add(key);
+const fill = new T.DirectionalLight(0xdfe8ff, 0.35);
+fill.position.set(-50, 30, -30);
+scene.add(fill);
+
+/* base plate + grid */
+const board = new T.Mesh(
+  new T.BoxGeometry(82, 1.4, 56),
+  new T.MeshStandardMaterial({color:0xf4f7fa, roughness:0.95, metalness:0})
+);
+board.position.set(1, -0.7, 1.5);
+board.receiveShadow = true;
+scene.add(board);
+const grid = new T.GridHelper(84, 42, 0xcfd9e3, 0xe1e8ef);
+grid.position.set(1, 0.02, 1.5);
+scene.add(grid);
+
+/* ---------- colors ---------- */
+const C = {
+  red:0xe23b3b, black:0x2a2f36, blue:0x2563eb, green:0x159c4b,
+  pcbBlue:0x1f64c4, pcb:0xd8cf9c, dcdc:0xe9e6f6, batt:0x394452,
+  reed:0xd6ecd6, horn:0x4a525c, mosfet:0x1b1f24, res:0xe9dcc2,
+  led:0xff5a5a, white:0xffffff
+};
+
+/* ---------- text sprites ---------- */
+function roundRect(ctx,x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+
+function textSprite(text, o={}){
+  const fs=o.fontSize||60, col=o.color||'#16202b', bg=o.bg||'rgba(255,255,255,0.92)',
+        border=o.border||null, wh=o.worldHeight||2.0, bold=o.bold!==false, pad=o.pad||16,
+        always=o.always||false;
+  const dpr=2, font=`${bold?'700':'500'} ${fs}px ${o.mono?'ui-monospace,Consolas,monospace':'system-ui,Arial'}`;
+  const c=document.createElement('canvas'), x=c.getContext('2d'); x.font=font;
+  const lines=String(text).split('\n'); let tw=0; lines.forEach(l=>tw=Math.max(tw,x.measureText(l).width));
+  const lh=fs*1.24, w=Math.ceil(tw+pad*2), h=Math.ceil(lh*lines.length+pad*1.5);
+  c.width=w*dpr; c.height=h*dpr; x.scale(dpr,dpr); x.font=font; x.textAlign='center'; x.textBaseline='middle';
+  if(bg){roundRect(x,0,0,w,h,12); x.fillStyle=bg; x.fill();}
+  if(border){roundRect(x,1.2,1.2,w-2.4,h-2.4,11); x.lineWidth=2.4; x.strokeStyle=border; x.stroke();}
+  x.fillStyle=col; lines.forEach((l,i)=>x.fillText(l,w/2,(pad*0.75)+lh*(i+0.5)));
+  const tex=new T.CanvasTexture(c); tex.minFilter=T.LinearFilter; tex.anisotropy=4;
+  const m=new T.SpriteMaterial({map:tex,transparent:true,depthTest:!always,depthWrite:false});
+  const sp=new T.Sprite(m); sp.scale.set(wh*(w/h),wh,1);
+  if(always) sp.renderOrder=999;
+  return sp;
+}
+
+/* registries */
+const comps={};               // name -> {pos,size}
+const pinLabels=[];           // sprites toggled by button
+
+function addBox(name,{pos,size,color,edge=0x2c3742,rough=0.55,metal=0.12}){
+  const [w,h,d]=size, g=new T.Group();
+  const mesh=new T.Mesh(new T.BoxGeometry(w,h,d),
+    new T.MeshStandardMaterial({color,roughness:rough,metalness:metal}));
+  mesh.position.y=h/2; mesh.castShadow=true; mesh.receiveShadow=true; g.add(mesh);
+  const eg=new T.LineSegments(new T.EdgesGeometry(new T.BoxGeometry(w,h,d)),
+    new T.LineBasicMaterial({color:edge,transparent:true,opacity:.55}));
+  eg.position.y=h/2; g.add(eg);
+  g.position.set(pos[0],0,pos[2]); scene.add(g);
+  comps[name]={pos,size,group:g,mesh};
+  return comps[name];
+}
+
+function label(name,text,o={}){
+  const c=comps[name]; const sp=textSprite(text,{worldHeight:o.worldHeight||1.9,always:true,...o});
+  sp.position.set(c.pos[0]+(o.dx||0), c.size[1]+(o.dy||3.2), c.pos[2]+(o.dz||0));
+  scene.add(sp); return sp;
+}
+
+/* pin helpers */
+function pinPos(name,side,t,yFrac=0.55){
+  const c=comps[name],[w,h,d]=c.size,cx=c.pos[0],cz=c.pos[2],y=Math.max(h*yFrac,0.7);
+  let p;
+  if(side==='left')  p=[cx-w/2, y, cz-d/2+t*d];
+  if(side==='right') p=[cx+w/2, y, cz-d/2+t*d];
+  if(side==='back')  p=[cx-w/2+t*w, y, cz-d/2];
+  if(side==='front') p=[cx-w/2+t*w, y, cz+d/2];
+  return new T.Vector3(...p);
+}
+const pinMat={red:matOf(C.red),black:matOf(C.black),blue:matOf(C.blue),green:matOf(C.green)};
+function matOf(col){return new T.MeshStandardMaterial({color:col,roughness:.35,metalness:.25});}
+function nub(p,col){const m=new T.Mesh(new T.SphereGeometry(0.34,14,14),pinMat[col]||matOf(col));
+  m.position.copy(p); scene.add(m); return m;}
+function pinTag(p,text,col,out){ // small label near a pin
+  const colors={red:'#c62828',black:'#2a2f36',blue:'#1d4ed8',green:'#157a3c'};
+  const sp=textSprite(text,{fontSize:40,worldHeight:0.92,mono:true,bold:true,
+    color:colors[col]||'#2a2f36',bg:'rgba(255,255,255,0.95)',border:colors[col]||'#888',pad:9});
+  sp.position.copy(p).add(out||new T.Vector3(0,0.9,0));
+  scene.add(sp); pinLabels.push(sp); return sp;
+}
+
+/* ---------- wires ---------- */
+const flowCurves=[]; // {curve} for animated particles
+function wire(a,b,col,o={}){
+  const lift=o.lift!=null?o.lift:5, thick=o.thick!=null?o.thick:0.26;
+  const A=a.clone(), B=b.clone();
+  let pts;
+  if(o.mid){ const M=o.mid.clone(); pts=[A,A.clone().lerp(M,.5).setY(A.y+lift*.5),M,M.clone().lerp(B,.5).setY(B.y+lift*.5),B]; }
+  else{
+    const M=A.clone().lerp(B,.5); M.y=Math.max(A.y,B.y)+lift;
+    const c1=A.clone().lerp(M,.5); c1.y+=lift*.35;
+    const c2=B.clone().lerp(M,.5); c2.y+=lift*.35;
+    pts=[A,c1,M,c2,B];
+  }
+  const curve=new T.CatmullRomCurve3(pts);
+  const geo=new T.TubeGeometry(curve, o.seg||44, thick, 8, false);
+  const mat=new T.MeshStandardMaterial({color:C[col]!=null?C[col]:col,roughness:.45,metalness:.18});
+  const mesh=new T.Mesh(geo,mat); mesh.castShadow=true; scene.add(mesh);
+  if(o.flow) flowCurves.push(curve);
+  return curve;
+}
+// ground bus drop: pin -> bus rail
+const BUS_Z=18, BUS_Y=1.0;
+function toGnd(p,lift=2.4){
+  const b=new T.Vector3(p.x, BUS_Y, BUS_Z);
+  wire(p, b, 'black', {lift, thick:0.22});
+  nub(b,'black');
+}
+
+/* ============================================================
+   COMPONENTS  (positions per original schematic layout)
+   X: left↔right · Z: back(−)↔front(+) · Y: up
+   ============================================================ */
+
+/* 1. АКБ */
+addBox('batt',{pos:[-27,0,-15],size:[14,7,9],color:C.batt,metal:.25,rough:.5});
+label('batt','АКБ LiFePO4 12V 40Ah',{dy:4.6});
+// terminals
+const battPlus=pinPos('batt','right',0.22,0.85), battMinus=pinPos('batt','front',0.35,0.4);
+nub(battPlus.clone().setY(7.0),'red'); // visible red post on top
+(function(){const post=new T.Mesh(new T.CylinderGeometry(0.5,0.5,1.2,16),pinMat.red);
+  post.position.set(comps.batt.pos[0]+4.6,7.2,comps.batt.pos[2]-2.6);scene.add(post);})();
+(function(){const post=new T.Mesh(new T.CylinderGeometry(0.5,0.5,1.2,16),pinMat.black);
+  post.position.set(comps.batt.pos[0]+4.6,7.2,comps.batt.pos[2]+2.6);scene.add(post);})();
+pinTag(battPlus.clone().setY(7.6),'+','red',new T.Vector3(1.4,0,0));
+pinTag(battMinus.clone().setY(5.2),'−','black',new T.Vector3(0,0,1.0));
+
+/* 2. Предохранитель */
+addBox('fuse',{pos:[-13,0,-17.5],size:[5.5,1.8,2],color:0xf2c14e,metal:.1,rough:.5,edge:0x8a6d1a});
+label('fuse','Предохранитель 5–10A',{dy:3.0,worldHeight:1.5});
+(function(){const glass=new T.Mesh(new T.CylinderGeometry(0.7,0.7,3.6,16),
+  new T.MeshStandardMaterial({color:0xfff4cf,transparent:true,opacity:.6,roughness:.2}));
+  glass.rotation.z=Math.PI/2; glass.position.set(comps.fuse.pos[0],1.9,comps.fuse.pos[2]);scene.add(glass);})();
+
+/* 3. Главный выключатель */
+addBox('sw',{pos:[-3,0,-17.5],size:[4,3,3],color:0x3a3f47,metal:.3,rough:.4});
+label('sw','Главный выключатель\nпитания',{dy:3.2,worldHeight:1.45});
+(function(){const lever=new T.Mesh(new T.CylinderGeometry(0.32,0.32,2.4,12),matOf(0xd23c3c));
+  lever.position.set(comps.sw.pos[0],3.6,comps.sw.pos[2]); lever.rotation.x=-0.5;scene.add(lever);
+  const knob=new T.Mesh(new T.SphereGeometry(0.55,16,16),matOf(0xd23c3c));
+  knob.position.set(comps.sw.pos[0],4.6,comps.sw.pos[2]-0.6);scene.add(knob);})();
+
+/* 4. INA226 (одна физическая плата: силовая + логическая части) */
+addBox('ina',{pos:[9,0,-15],size:[11,1.8,7.5],color:C.pcbBlue,metal:.15,rough:.45,edge:0x10387a});
+label('ina','INA226 · I²C 0x40 · high-side current monitor',{dy:3.4,worldHeight:1.55});
+// силовые контакты слева
+const ina_VINp=pinPos('ina','left',0.22), ina_VINm=pinPos('ina','left',0.74);
+pinTag(ina_VINp,'VIN+','red',new T.Vector3(-1.6,0.4,0));
+pinTag(ina_VINm,'VIN−','red',new T.Vector3(-1.6,0.4,0));
+nub(ina_VINp,'red'); nub(ina_VINm,'red');
+// логические контакты справа
+const inaR={VCC:0.12,SDA:0.28,SCL:0.44,GND:0.60,A0:0.76,A1:0.92};
+const inaPins={};
+const inaColor={VCC:'red',SDA:'blue',SCL:'blue',GND:'black',A0:'black',A1:'black'};
+for(const k in inaR){ const p=pinPos('ina','right',inaR[k]); inaPins[k]=p;
+  nub(p,inaColor[k]); pinTag(p,k,inaColor[k],new T.Vector3(1.5,0.4,0)); }
+
+/* 5. Системная + шина (узел) */
+addBox('sys',{pos:[20,0,-8.5],size:[1.4,1.4,7],color:C.red,metal:.3,rough:.4,edge:0x8c1f1f});
+label('sys','Системная + шина\n(после INA226)',{dy:2.4,dz:-0.5,worldHeight:1.45,color:'#c62828'});
+const sysTop=pinPos('sys','back',0.5), sysMid=new T.Vector3(20,1.2,-8.5),
+      sysBot=pinPos('sys','front',0.5);
+
+/* 6. DC-DC */
+addBox('dcdc',{pos:[27,0,-13],size:[9,2.2,6],color:C.dcdc,metal:.1,rough:.5,edge:0x6a5fae});
+label('dcdc','DC-DC 12V → 5V',{dy:3.0,worldHeight:1.6});
+const dc_INp=pinPos('dcdc','left',0.3), dc_INm=pinPos('dcdc','left',0.72),
+      dc_OUTp=pinPos('dcdc','right',0.3), dc_OUTm=pinPos('dcdc','right',0.72);
+pinTag(dc_INp,'IN+','red',new T.Vector3(-1.4,0.4,0));
+pinTag(dc_INm,'IN−','black',new T.Vector3(-1.4,0.4,0));
+pinTag(dc_OUTp,'OUT+ 5V','red',new T.Vector3(1.8,0.4,0));
+pinTag(dc_OUTm,'OUT− GND','black',new T.Vector3(1.8,0.4,0));
+[dc_INp,dc_OUTp].forEach(p=>nub(p,'red')); [dc_INm,dc_OUTm].forEach(p=>nub(p,'black'));
+
+/* 7. LILYGO T-SIM7600G-H (главная плата) */
+addBox('lily',{pos:[3,0,4],size:[25,2,15],color:C.pcb,metal:.05,rough:.7,edge:0x9a8f55});
+label('lily','LILYGO T-SIM7600G-H  ·  ESP32-WROVER + SIM7600G-H',{dy:3.0,dz:-6.0,worldHeight:1.7});
+const L={  // левый край: пины
+  '5V/VIN':0.045,'3V3':0.12,'GPIO21':0.205,'GPIO22':0.285,'GPIO14':0.365,
+  'GPIO13':0.445,'GPIO32':0.525,'GPIO19':0.605,'GPIO33':0.685,'GPIO35':0.765,'GND':0.90};
+const Lalt={'GPIO21':'I²C SDA','GPIO22':'I²C SCL','GPIO14':'ACCEL_INT','GPIO13':'REED',
+  'GPIO32':'SIREN_CTRL','GPIO19':'STATUS_LED','GPIO33':'unused','GPIO35':'BAT_ADC'};
+const Lcol={'5V/VIN':'red','3V3':'red','GPIO21':'blue','GPIO22':'blue','GPIO14':'green',
+  'GPIO13':'green','GPIO32':'green','GPIO19':'green','GPIO33':'black','GPIO35':'black','GND':'black'};
+const Lp={};
+for(const k in L){ const p=pinPos('lily','left',L[k]); Lp[k]=p; nub(p,Lcol[k]);
+  const txt=Lalt[k]?`${k} ${Lalt[k]}`:k;
+  pinTag(p,txt,Lcol[k],new T.Vector3(-2.1,0.5,0)); }
+
+/* SIM7600G-H встроенный модем (пунктирный блок на плате) */
+(function(){
+  const w=8.5,d=8.5;
+  const g=new T.Mesh(new T.BoxGeometry(w,0.6,d),
+    new T.MeshStandardMaterial({color:0xbfd8ff,transparent:true,opacity:.35,roughness:.6}));
+  g.position.set(comps.lily.pos[0]+6, 2.3, comps.lily.pos[2]-0.5); scene.add(g);
+  const eg=new T.LineSegments(new T.EdgesGeometry(new T.BoxGeometry(w,0.6,d)),
+    new T.LineDashedMaterial({color:0x2563eb,dashSize:0.7,gapSize:0.5}));
+  eg.computeLineDistances(); eg.position.copy(g.position); scene.add(eg);
+  const lab=textSprite('SIM7600G-H (встроенный)\nTX=GPIO27 · RX=GPIO26\nPWRKEY=GPIO4 · DTR=GPIO25',
+    {fontSize:38,worldHeight:2.4,mono:true,bold:true,color:'#1d4ed8',
+     bg:'rgba(255,255,255,0.94)',border:'#2563eb',pad:10,always:true});
+  lab.position.set(g.position.x, 5.0, g.position.z); scene.add(lab); pinLabels.push(lab);
+  // SIM card
+  const sim=new T.Mesh(new T.BoxGeometry(1.6,0.25,2.2),matOf(0xc9a14a));
+  sim.position.set(g.position.x-2.4,2.5,g.position.z+2.6);scene.add(sim);
+  const simlab=textSprite('SIM',{fontSize:34,worldHeight:0.7,mono:true,color:'#6b4f12',bg:'rgba(255,255,255,.9)',pad:7,always:true});
+  simlab.position.set(sim.position.x,3.4,sim.position.z);scene.add(simlab);pinLabels.push(simlab);
+})();
+
+/* 8. Антенны */
+function antenna(x,z,txt){
+  const base=new T.Mesh(new T.CylinderGeometry(0.35,0.5,1.2,12),matOf(0x33373d));
+  base.position.set(x,0.6,z);scene.add(base);
+  const rod=new T.Mesh(new T.CylinderGeometry(0.14,0.14,5.5,10),matOf(0x6b7178));
+  rod.position.set(x,3.4,z);scene.add(rod);
+  const tip=new T.Mesh(new T.SphereGeometry(0.28,12,12),matOf(0x33373d));
+  tip.position.set(x,6.2,z);scene.add(tip);
+  const lab=textSprite(txt,{fontSize:40,worldHeight:1.4,bold:true,color:'#2a2f36',pad:10,always:true});
+  lab.position.set(x,7.6,z);scene.add(lab);
+  return new T.Vector3(x,2.6,z);
+}
+const antLTE=antenna(21,-0.5,'LTE MAIN антенна');
+const antGPS=antenna(21,5.5,'GPS антенна');
+
+/* 9. MPU-6050 */
+addBox('mpu',{pos:[-27,0,3],size:[6.5,1.4,5.4],color:C.pcbBlue,metal:.15,rough:.45,edge:0x10387a});
+label('mpu','MPU-6050 · I²C 0x68\n(используется только акселерометр)',{dy:2.9,worldHeight:1.45});
+const M={VCC:0.12,GND:0.28,SDA:0.44,SCL:0.60,INT:0.76,AD0:0.92};
+const Mcol={VCC:'red',GND:'black',SDA:'blue',SCL:'blue',INT:'green',AD0:'black'};
+const Mp={};
+for(const k in M){const p=pinPos('mpu','right',M[k]);Mp[k]=p;nub(p,Mcol[k]);
+  pinTag(p,k,Mcol[k],new T.Vector3(1.5,0.4,0));}
+// гироскоп не используется — пометка
+(function(){const sp=textSprite('гироскоп\nне исп.',{fontSize:34,worldHeight:1.0,mono:true,
+  color:'#8a6d1a',bg:'rgba(255,247,224,0.95)',border:'#caa54a',pad:8,always:true});
+  sp.position.set(comps.mpu.pos[0]-1,2.4,comps.mpu.pos[2]-3.2);scene.add(sp);pinLabels.push(sp);})();
+
+/* 11. Геркон / датчик двери */
+addBox('reed',{pos:[-27,0,14],size:[5.5,1.6,3],color:C.reed,metal:.05,rough:.7,edge:0x6fae7f});
+label('reed','Геркон / датчик двери\nGPIO13 INPUT_PULLUP',{dy:2.6,worldHeight:1.4});
+const reed_SIG=pinPos('reed','right',0.3), reed_GND=pinPos('reed','right',0.72);
+pinTag(reed_SIG,'SIG','green',new T.Vector3(1.4,0.4,0));
+pinTag(reed_GND,'GND','black',new T.Vector3(1.4,0.4,0));
+nub(reed_SIG,'green'); nub(reed_GND,'black');
+
+/* 12. Сирена 12V */
+(function(){
+  const x=33,z=-2;
+  const body=new T.Mesh(new T.CylinderGeometry(1.6,1.6,2.6,20),matOf(C.horn));
+  body.rotation.z=Math.PI/2; body.position.set(x,3,z); body.castShadow=true; scene.add(body);
+  const cone=new T.Mesh(new T.ConeGeometry(3.0,3.2,24,1,true),matOf(0x5b636d));
+  cone.rotation.z=-Math.PI/2; cone.position.set(x+2.6,3,z); cone.castShadow=true; scene.add(cone);
+  comps.siren={pos:[x,0,z],size:[3,6,3]};
+  const lab=textSprite('12V сирена',{fontSize:46,worldHeight:1.7,bold:true,always:true,pad:11});
+  lab.position.set(x,7.0,z);scene.add(lab);
+  comps.siren.plus=new T.Vector3(x-1.0,5.0,z);
+  comps.siren.minus=new T.Vector3(x-1.0,1.1,z);
+  nub(comps.siren.plus,'red'); nub(comps.siren.minus,'black');
+  pinTag(comps.siren.plus,'+','red',new T.Vector3(-1.2,0.6,0));
+  pinTag(comps.siren.minus,'−','black',new T.Vector3(-1.2,-0.4,0));
+})();
+
+/* 13. MOSFET IRLZ44N (TO-220) */
+(function(){
+  const x=31,z=11;
+  addBox('mos',{pos:[x,0,z],size:[3,4.2,1.6],color:C.mosfet,metal:.2,rough:.5,edge:0x000000});
+  const tab=new T.Mesh(new T.BoxGeometry(3,1.4,0.3),matOf(0x9aa1a8));
+  tab.position.set(x,4.0,z-0.7);scene.add(tab);
+  label('mos','IRLZ44N N-MOSFET\nуправление сиреной',{dy:3.2,worldHeight:1.45});
+  // legs G D S
+  comps.mos.gate =new T.Vector3(x-0.9,0.5,z+0.8);
+  comps.mos.drain=new T.Vector3(x,    0.5,z+0.8);
+  comps.mos.src  =new T.Vector3(x+0.9,0.5,z+0.8);
+  pinTag(comps.mos.gate ,'G Gate','green',new T.Vector3(-1.6,1.0,0.6));
+  pinTag(comps.mos.drain,'D Drain','black',new T.Vector3(0,1.9,0.6));
+  pinTag(comps.mos.src  ,'S Source','black',new T.Vector3(1.7,1.0,0.6));
+  nub(comps.mos.gate,'green');nub(comps.mos.drain,'red');nub(comps.mos.src,'black');
+})();
+
+/* resistor helper */
+function resistor(name,pos,txt,col){
+  const g=new T.Group();
+  const body=new T.Mesh(new T.CylinderGeometry(0.55,0.55,2.4,16),matOf(C.res));
+  body.rotation.z=Math.PI/2; body.castShadow=true; g.add(body);
+  [-0.5,0.1,0.6].forEach((o,i)=>{const b=new T.Mesh(new T.CylinderGeometry(0.57,0.57,0.22,16),
+    matOf([0x8a5a2b,0x111,0xd4a017][i])); b.rotation.z=Math.PI/2; b.position.x=o; g.add(b);});
+  g.position.set(pos[0],1.4,pos[2]); scene.add(g);
+  comps[name]={pos:[pos[0],0,pos[2]],size:[2.4,2,1],
+    a:new T.Vector3(pos[0]-1.4,1.4,pos[2]), b:new T.Vector3(pos[0]+1.4,1.4,pos[2])};
+  const lab=textSprite(txt,{fontSize:34,worldHeight:0.95,mono:true,bold:true,
+    color:col||'#2a2f36',bg:'rgba(255,255,255,.93)',pad:8,always:true});
+  lab.position.set(pos[0],3.0,pos[2]);scene.add(lab);pinLabels.push(lab);
+  return comps[name];
+}
+resistor('rgate',[23,0,11],'R.GATE 100–330Ω','#157a3c');
+resistor('rpd',[31,0,15.5],'R.PULL-DOWN 10kΩ','#2a2f36');
+resistor('rled',[10,0,15.5],'220–330Ω','#157a3c');
+
+/* 14. Статусный LED */
+(function(){
+  const x=16,z=15.5;
+  const led=new T.Mesh(new T.SphereGeometry(0.8,18,18),
+    new T.MeshStandardMaterial({color:C.led,emissive:0x661111,roughness:.2,metalness:.1}));
+  led.position.set(x,1.6,z);led.castShadow=true;scene.add(led);
+  comps.led={pos:[x,0,z],size:[2,2,2],plus:new T.Vector3(x-0.7,1.0,z),minus:new T.Vector3(x+0.7,1.0,z)};
+  const lab=textSprite('Статусный LED',{fontSize:40,worldHeight:1.35,bold:true,always:true,pad:10});
+  lab.position.set(x,3.4,z);scene.add(lab);
+  nub(comps.led.plus,'green');nub(comps.led.minus,'black');
+})();
+
+/* ---------- GND bus rail ---------- */
+(function(){
+  const bar=new T.Mesh(new T.BoxGeometry(62,1.4,1.4),matOf(C.black));
+  bar.position.set(1,BUS_Y,BUS_Z);bar.castShadow=true;scene.add(bar);
+  const lab=textSprite('Общая земля (GND шина)',{fontSize:44,worldHeight:1.7,bold:true,
+    color:'#1d2733',bg:'rgba(255,255,255,0.94)',border:'#2a2f36',pad:12,always:true});
+  lab.position.set(1,3.4,BUS_Z+1.2);scene.add(lab);
+})();
+
+/* ============================================================
+   WIRING  (строго по схеме — без новых соединений)
+   ============================================================ */
+
+/* --- силовая цепь питания (поток) --- */
+wire(battPlus, pinPos('fuse','left',0.5), 'red',{lift:4.5,thick:0.34,flow:true});
+wire(pinPos('fuse','right',0.5), pinPos('sw','left',0.5),'red',{lift:3.5,thick:0.34,flow:true});
+wire(pinPos('sw','right',0.5), ina_VINp,'red',{lift:4,thick:0.34,flow:true});
+wire(ina_VINm, sysMid,'red',{lift:6,thick:0.34,flow:true});      // VIN- -> системная шина
+wire(sysTop, dc_INp,'red',{lift:4.5,thick:0.34,flow:true});       // шина -> DC-DC IN+
+wire(sysBot, comps.siren.plus,'red',{lift:5.5,thick:0.34,flow:true}); // шина -> сирена +
+wire(dc_OUTp, Lp['5V/VIN'],'red',{lift:8,thick:0.30,flow:true});  // 5V -> LILYGO
+
+/* --- логическое питание +3V3 (тонкие красные) --- */
+wire(inaPins.VCC, Lp['3V3'],'red',{lift:9,thick:0.16});
+wire(Mp.VCC, Lp['3V3'],'red',{lift:7,thick:0.16});
+
+/* --- I2C (синие) --- */
+wire(inaPins.SDA, Lp['GPIO21'],'blue',{lift:10,thick:0.15});
+wire(inaPins.SCL, Lp['GPIO22'],'blue',{lift:10.6,thick:0.15});
+wire(Mp.SDA, Lp['GPIO21'],'blue',{lift:6.5,thick:0.15});
+wire(Mp.SCL, Lp['GPIO22'],'blue',{lift:7.2,thick:0.15});
+
+/* --- цифровые сигналы (зелёные) --- */
+wire(Mp.INT, Lp['GPIO14'],'green',{lift:6,thick:0.15});           // ACCEL_INT
+wire(reed_SIG, Lp['GPIO13'],'green',{lift:5,thick:0.15});         // REED
+wire(Lp['GPIO32'], comps.rgate.a,'green',{lift:7,thick:0.16});    // SIREN_CTRL -> R.GATE
+wire(comps.rgate.b, comps.mos.gate,'green',{lift:3,thick:0.16});  // R.GATE -> Gate
+wire(Lp['GPIO19'], comps.rled.a,'green',{lift:6,thick:0.16});     // STATUS_LED -> R
+wire(comps.rled.b, comps.led.plus,'green',{lift:2.5,thick:0.16}); // R -> LED+
+
+/* --- силовой выход сирены через MOSFET --- */
+wire(comps.siren.minus, comps.mos.drain,'black',{lift:4,thick:0.30}); // сирена - -> Drain
+/* pull-down: Gate -> GND */
+wire(comps.mos.gate, comps.rpd.a,'green',{lift:2,thick:0.16});
+toGnd(comps.rpd.b);
+
+/* --- РЧ: модем SIM7600 -> антенны (коаксиал, нейтральный цвет) --- */
+wire(new T.Vector3(15.5,2,1.0), antLTE, 0x59636e,{lift:3,thick:0.18});
+wire(new T.Vector3(15.5,2,4.0), antGPS, 0x59636e,{lift:3,thick:0.18});
+
+/* ============================================================
+   GROUND returns -> общая шина (чёрные)
+   ============================================================ */
+toGnd(battMinus,5);                 // минус АКБ
+toGnd(dc_INm);                      // DC-DC IN-
+toGnd(dc_OUTm);                     // DC-DC OUT-
+toGnd(Lp['GND']);                   // LILYGO GND
+toGnd(inaPins.GND);                 // INA226 GND
+toGnd(inaPins.A0,3.4);             // INA226 A0 -> GND
+toGnd(inaPins.A1,3.0);             // INA226 A1 -> GND
+toGnd(Mp.GND);                      // MPU GND
+toGnd(Mp.AD0,3.0);                 // MPU AD0 -> GND
+toGnd(comps.mos.src);              // MOSFET Source
+toGnd(reed_GND);                   // геркон GND
+toGnd(comps.led.minus);           // LED -
+
+/* ---------- power-flow particles ---------- */
+const flowGroup=new T.Group(); scene.add(flowGroup);
+const particles=[];
+flowCurves.forEach(curve=>{
+  for(let i=0;i<2;i++){
+    const m=new T.Mesh(new T.SphereGeometry(0.42,12,12),
+      new T.MeshStandardMaterial({color:0xffd54a,emissive:0xff8a00,emissiveIntensity:1.1,roughness:.3}));
+    flowGroup.add(m); particles.push({m,curve,t:Math.random()});
+  }
+});
+let flowOn=true;
+
+/* ---------- static direction arrows on trunk ---------- */
+function arrow(curve,t){
+  const p=curve.getPointAt(t), p2=curve.getPointAt(Math.min(t+0.02,1));
+  const dir=p2.clone().sub(p).normalize();
+  const cone=new T.Mesh(new T.ConeGeometry(0.55,1.4,12),
+    new T.MeshStandardMaterial({color:0xffae42,emissive:0x884400,roughness:.4}));
+  cone.position.copy(p); cone.quaternion.setFromUnitVectors(new T.Vector3(0,1,0),dir);
+  flowGroup.add(cone);
+}
+flowCurves.slice(0,6).forEach(c=>arrow(c,0.5));
+
+/* ============================================================
+   custom orbit controls
+   ============================================================ */
+const target=new T.Vector3(2,1,2);
+let theta=Math.PI*0.62, phi=Math.PI*0.30, radius=92;
+const DEF={theta,phi,radius,target:target.clone()};
+function applyCam(){
+  const sp=Math.sin(phi);
+  camera.position.set(
+    target.x+radius*sp*Math.cos(theta),
+    target.y+radius*Math.cos(phi),
+    target.z+radius*sp*Math.sin(theta));
+  camera.lookAt(target);
+}
+let drag=null;
+renderer.domElement.addEventListener('pointerdown',e=>{
+  drag={x:e.clientX,y:e.clientY,btn:e.button};
+  renderer.domElement.setPointerCapture(e.pointerId);
+});
+addEventListener('pointermove',e=>{
+  if(!drag)return;
+  const dx=e.clientX-drag.x, dy=e.clientY-drag.y; drag.x=e.clientX; drag.y=e.clientY;
+  if(drag.btn===2){ // pan
+    const panX=-dx*radius*0.0013, panY=dy*radius*0.0013;
+    const right=new T.Vector3(Math.sin(theta-Math.PI/2),0,-Math.cos(theta-Math.PI/2));
+    const fwd=new T.Vector3(Math.cos(theta),0,Math.sin(theta));
+    target.addScaledVector(right,panX); target.addScaledVector(fwd,panY);
+  }else{
+    theta+=dx*0.006; phi-=dy*0.006;
+    phi=Math.max(0.18,Math.min(Math.PI*0.49,phi));
+  }
+  applyCam();
+});
+addEventListener('pointerup',()=>drag=null);
+renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
+renderer.domElement.addEventListener('wheel',e=>{
+  e.preventDefault();
+  radius*=(1+Math.sign(e.deltaY)*0.08);
+  radius=Math.max(34,Math.min(190,radius)); applyCam();
+},{passive:false});
+
+/* ---------- UI buttons ---------- */
+const btnPins=document.getElementById('btnPins');
+const btnFlow=document.getElementById('btnFlow');
+const btnReset=document.getElementById('btnReset');
+let pinsOn=true;
+btnPins.onclick=()=>{pinsOn=!pinsOn; pinLabels.forEach(s=>s.visible=pinsOn);
+  btnPins.classList.toggle('off',!pinsOn);};
+btnFlow.onclick=()=>{flowOn=!flowOn; flowGroup.visible=flowOn;
+  btnFlow.classList.toggle('off',!flowOn);};
+btnReset.onclick=()=>{theta=DEF.theta;phi=DEF.phi;radius=DEF.radius;target.copy(DEF.target);applyCam();};
+
+/* ---------- resize + loop ---------- */
+function resize(){
+  const w=innerWidth,h=innerHeight;
+  renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix();
+}
+addEventListener('resize',resize); resize(); applyCam();
+
+const clock=new T.Clock();
+function loop(){
+  const dt=clock.getDelta();
+  if(flowOn) particles.forEach(p=>{ p.t=(p.t+dt*0.18)%1; p.m.position.copy(p.curve.getPointAt(p.t)); });
+  renderer.render(scene,camera);
+  requestAnimationFrame(loop);
+}
+document.getElementById('loader').remove();
+loop();
+</script>
